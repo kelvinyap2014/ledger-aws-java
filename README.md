@@ -296,7 +296,7 @@ ledger-aws-java/
 │   │   │           ├── repository/              # Spring Data JPA / JDBC Repositories
 │   │   │           └── domain/                  # Domain Entities & Records (Account, LedgerEntry)
 │   │   └── resources/
-│   │       ├── application.yml              # App configuration (DB, S3, AWS SDK)
+│   │       ├── application.properties           # App configuration (DB, S3, AWS SDK)
 │   │       └── db/
 │   │           └── changelog/               # Liquibase Migrations
 │   │               ├── db.changelog-master.yaml
@@ -307,8 +307,7 @@ ledger-aws-java/
 │       └── java/
 │           └── fintech/
 │               └── ledger/
-│                   └── service/
-│                       └── TransferServiceTest.java
+│                   └── LedgerStreamApplicationTests.java
 ├── lambda/                     # Asynchronous Settlement Lambda Handler (Go)
 │   └── settlement-handler/
 │       └── main.go             # Go (Golang) Lambda entrypoint for processing SQS events
@@ -369,6 +368,18 @@ terraform destroy -var-file="terraform-dev.tfvars"
 ```
 
 ## Java development
+
+### How to Run Different Spring Boot Profiles
+
+#### Run Dev Profile (PostgreSQL):
+```bash
+./gradlew bootRun --args='--spring.profiles.active=dev'
+```
+
+#### Run Test Profile (H2):
+```bash
+./gradlew bootRun --args='--spring.profiles.active=test'
+```
 
 ## Go (Golang) development
 
