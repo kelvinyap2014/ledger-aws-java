@@ -68,8 +68,6 @@ sequenceDiagram
 databaseChangeLog:
   - include:
       file: db/changelog/changes/001-initial-schema.sql
-  - include:
-      file: db/changelog/changes/002-sample-mock-data.sql
 ```
 
 ### 3.2 Initial Schema (001-initial-schema.sql)
@@ -111,11 +109,11 @@ CREATE INDEX idx_ledger_tx_ref ON ledger_entries(transaction_reference);
 CREATE INDEX idx_ledger_account_id ON ledger_entries(account_id);
 ```
 
-### 3.3 Sample Mock Data (002-sample-mock-data.sql)
+### 3.3 Sample Mock Data (001-test-sample-mock-data.sql)
 
 ```sql
 -- Liquibase formatted sql
--- changeset ledgerstream:002-sample-mock-data
+-- changeset ledgerstream:001-test-sample-mock-data.sql
 
 INSERT INTO accounts (id, account_number, holder_name, currency, balance, status) VALUES
 ('acc-001-nzd', 'NZ01-8839-0012938-00', 'Kelvin Smith', 'NZD', 15000.0000, 'ACTIVE'),
@@ -134,138 +132,158 @@ INSERT INTO ledger_entries (id, transaction_reference, account_id, entry_type, a
 ```java
 package fintech.ledger.service;
 
+import fintech.ledger.domain.IdempotencyKey;
 import fintech.ledger.domain.LedgerEntry;
 import fintech.ledger.repository.AccountRepository;
+import fintech.ledger.repository.IdempotencyRepository;
 import fintech.ledger.repository.LedgerRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
 @Service
+@RequiredArgsConstructor
 public class TransferService {
 
     private final AccountRepository accountRepository;
     private final LedgerRepository ledgerRepository;
-
-    public TransferService(AccountRepository accountRepository, LedgerRepository ledgerRepository) {
-        this.accountRepository = accountRepository;
-        this.ledgerRepository = ledgerRepository;
-    }
+    private final IdempotencyRepository idempotencyRepository;
 
     @Transactional
-    public String executeTransfer(String sourceAccountId, String destinationAccountId, BigDecimal amount, String currency, String description) {
+    public String executeTransfer(String idempotencyKey, String sourceAccountId, String destinationAccountId, BigDecimal amount, String currency, String description) {
+
+        // 1. Enforce Idempotency if key is provided
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            var existingKeyOpt = idempotencyRepository.findById(idempotencyKey);
+            if (existingKeyOpt.isPresent()) {
+                // Request has already been processed! Return the stored transaction reference.
+                return existingKeyOpt.get().getResponseBody();
+            }
+        }
+
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Transfer amount must be strictly positive");
         }
 
+        // 2. Lock accounts using pessimistic write lock
         var sourceAccount = accountRepository.findByIdForUpdate(sourceAccountId)
-            .orElseThrow(() -> new IllegalArgumentException("Source account not found"));
+                .orElseThrow(() -> new IllegalArgumentException("Source account not found: " + sourceAccountId));
         var destAccount = accountRepository.findByIdForUpdate(destinationAccountId)
-            .orElseThrow(() -> new IllegalArgumentException("Destination account not found"));
+                .orElseThrow(() -> new IllegalArgumentException("Destination account not found: " + destinationAccountId));
 
+        // 3. Validate sufficient funds
         if (sourceAccount.getBalance().compareTo(amount) < 0) {
             throw new IllegalStateException("Insufficient funds in source account");
         }
 
+        // 4. Generate unique transaction reference
         String txRef = "TX-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+
+        // 5. Create balanced double-entry ledger legs
         var debitEntry = LedgerEntry.createDebit(txRef, sourceAccountId, amount, currency, description);
         var creditEntry = LedgerEntry.createCredit(txRef, destinationAccountId, amount, currency, description);
 
         ledgerRepository.saveAll(List.of(debitEntry, creditEntry));
 
-        accountRepository.updateBalance(sourceAccountId, sourceAccount.getBalance().subtract(amount));
-        accountRepository.updateBalance(destinationAccountId, destAccount.getBalance().add(amount));
+        // 6. Update balances atomically
+        sourceAccount.setBalance(sourceAccount.getBalance().subtract(amount));
+        destAccount.setBalance(destAccount.getBalance().add(amount));
+        var now = OffsetDateTime.now();
+        sourceAccount.setUpdatedAt(now);
+        destAccount.setUpdatedAt(now);
+        accountRepository.saveAll(List.of(sourceAccount, destAccount));
+
+        // 7. Save Idempotency Key to prevent duplicate processing on retry
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            IdempotencyKey keyRecord = IdempotencyKey.builder()
+                    .idempotencyKey(idempotencyKey)
+                    .requestHash(sourceAccountId + destinationAccountId + amount.toPlainString()) // simple verification hash
+                    .responseBody(txRef) // Storing transaction reference as cached response
+                    .createdAt(OffsetDateTime.now())
+                    .build();
+            idempotencyRepository.save(keyRecord);
+        }
 
         return txRef;
     }
 }
 ```
 
-### 4.2 Mockito Unit Test Suite (TransferServiceTest.java)
+### 4.2 Mockito Unit Test Suite (TransferServiceIntegrationTest.java)
 
 ```java
 package fintech.ledger.service;
 
 import fintech.ledger.domain.Account;
 import fintech.ledger.repository.AccountRepository;
-import fintech.ledger.repository.LedgerRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
-class TransferServiceTest {
+@SpringBootTest
+@ActiveProfiles("test")
+@Transactional
+class TransferServiceIntegrationTest {
 
-    @Mock
+    @Autowired
+    private TransferService transferService;
+
+    @Autowired
     private AccountRepository accountRepository;
 
-    @Mock
-    private LedgerRepository ledgerRepository;
-
-    private TransferService transferService;
+    @Autowired
+    private EntityManager entityManager;
 
     @BeforeEach
     void setUp() {
-        transferService = new TransferService(accountRepository, ledgerRepository);
+        // Clear Hibernate cache and reset mock data before each test
+        entityManager.clear();
     }
 
     @Test
-    @DisplayName("Should successfully process double-entry transfer between accounts")
-    void executeTransfer_Success() {
-        String sourceId = "acc-001";
-        String destId = "acc-002";
-        BigDecimal amount = new BigDecimal("100.00");
+    @DisplayName("Should successfully execute transfer using real database and Liquibase mock data")
+    void executeTransfer_IntegrationSuccess() {
+        // Given pre-loaded mock accounts from Liquibase changelog (001-test-sample-mock-data.sql)
+        String sourceId = "acc-001-nzd"; // Kelvin Smith: 15000.0000
+        String destId = "acc-003-nzd";   // Jane Doe: 250.5000
+        BigDecimal transferAmount = new BigDecimal("500.0000");
 
-        Account sourceAcc = new Account(sourceId, "NZ01-001", "Alice", "NZD", new BigDecimal("500.00"), "ACTIVE");
-        Account destAcc = new Account(destId, "NZ01-002", "Bob", "NZD", new BigDecimal("50.00"), "ACTIVE");
+        // When
+        String txRef = transferService.executeTransfer(
+                "test-idempotency-key-01",
+                sourceId,
+                destId,
+                transferAmount,
+                "NZD",
+                "Integration test payment"
+        );
 
-        when(accountRepository.findByIdForUpdate(sourceId)).thenReturn(Optional.of(sourceAcc));
-        when(accountRepository.findByIdForUpdate(destId)).thenReturn(Optional.of(destAcc));
-
-        String txRef = transferService.executeTransfer(sourceId, destId, amount, "NZD", "Peer-to-peer payment");
-
+        // Then
         assertNotNull(txRef);
         assertTrue(txRef.startsWith("TX-"));
 
-        verify(ledgerRepository, times(1)).saveAll(anyList());
-        verify(accountRepository).updateBalance(eq(sourceId), eq(new BigDecimal("400.00")));
-        verify(accountRepository).updateBalance(eq(destId), eq(new BigDecimal("150.00")));
-    }
+        Account updatedSource = accountRepository.findById(sourceId).orElseThrow();
+        Account updatedDest = accountRepository.findById(destId).orElseThrow();
 
-    @Test
-    @DisplayName("Should throw exception when source balance is insufficient")
-    void executeTransfer_InsufficientBalance() {
-        String sourceId = "acc-001";
-        String destId = "acc-002";
-        BigDecimal amount = new BigDecimal("1000.00");
-
-        Account sourceAcc = new Account(sourceId, "NZ01-001", "Alice", "NZD", new BigDecimal("100.00"), "ACTIVE");
-        Account destAcc = new Account(destId, "NZ01-002", "Bob", "NZD", new BigDecimal("50.00"), "ACTIVE");
-
-        when(accountRepository.findByIdForUpdate(sourceId)).thenReturn(Optional.of(sourceAcc));
-        when(accountRepository.findByIdForUpdate(destId)).thenReturn(Optional.of(destAcc));
-
-        assertThrows(IllegalStateException.class, () ->
-            transferService.executeTransfer(sourceId, destId, amount, "NZD", "Payment")
-        );
-
-        verify(ledgerRepository, never()).saveAll(anyList());
+        assertEquals(new BigDecimal("14500.0000"), updatedSource.getBalance());
+        assertEquals(new BigDecimal("750.5000"), updatedDest.getBalance());
     }
 }
+
 ```
 
 ## 5. Deployment & Operational Runbook
@@ -301,8 +319,7 @@ ledger-aws-java/
 │   │           └── changelog/               # Liquibase Migrations
 │   │               ├── db.changelog-master.yaml
 │   │               ├── changes/
-│   │               │   ├── 001-initial-schema.sql
-│   │               │   └── 002-sample-mock-data.sql
+│   │               │   └── 001-initial-schema.sql
 │   └── test/                        # Unit & Integration Tests (JUnit 5, Mockito, Testcontainers)
 │       └── java/
 │           └── fintech/
@@ -436,6 +453,72 @@ The workflow triggers automatically on changes to:
 # Testing
 
 ## Test API with curl
-```bash
 
+### 1. Start the Application
+```bash
+./gradlew bootRun --args='--spring.profiles.active=dev'
+```
+
+The API will be available at `http://localhost:8080/swagger-ui/index.html`.
+
+### 2. Execute a Transfer Request
+```bash
+curl -X POST http://localhost:8080/api/v1/transfers \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000" \
+  -d '{
+    "sourceAccountId": "acc-001-nzd",
+    "destinationAccountId": "acc-002-nzd",
+    "amount": 250.00,
+    "currency": "NZD",
+    "description": "Peer-to-peer payment"
+  }'
+```
+
+**Expected Response (201 Created):**
+```json
+{
+  "status": "SUCCESS",
+  "transactionReference": "TX-A1B2C3D4",
+  "idempotencyKey": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+### 3. Verify Idempotency — Resubmit with Same Key
+```bash
+curl -X POST http://localhost:8080/api/v1/transfers \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000" \
+  -d '{
+    "sourceAccountId": "acc-001-nzd",
+    "destinationAccountId": "acc-002-nzd",
+    "amount": 250.00,
+    "currency": "NZD",
+    "description": "Peer-to-peer payment"
+  }'
+```
+Should return the **same transaction reference** and HTTP 201 without creating duplicate entries.
+
+### 4. Test Insufficient Funds Scenario
+```bash
+curl -X POST http://localhost:8080/api/v1/transfers \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{
+    "sourceAccountId": "acc-003-nzd",
+    "destinationAccountId": "acc-002-nzd",
+    "amount": 10000.00,
+    "currency": "NZD",
+    "description": "Large transfer"
+  }'
+```
+
+**Expected Response (400 Bad Request):**
+```json
+{
+  "timestamp": "2026-10-19T17:48:50.619069803+13:00",
+  "message": "Insufficient funds in source account",
+  "error": "Bad Request",
+  "status": 400
+}
 ```

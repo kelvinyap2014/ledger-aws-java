@@ -135,7 +135,7 @@ Liquibase changelog files are located at:
 
 **Schema Includes:**
 - `001-initial-schema.sql` — Accounts, ledger entries, idempotency keys, indexes
-- `002-sample-mock-data.sql` — Sample test accounts and transactions
+- `src/test/resources/db/changelog/test/001-test-sample-mock-data.sql` — Sample test accounts and transactions
 
 **Key Tables:**
 - `accounts` — Holder name, balance, currency (NZD), status (ACTIVE/SUSPENDED)

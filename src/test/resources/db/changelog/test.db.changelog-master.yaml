@@ -1,0 +1,5 @@
+databaseChangeLog:
+  - include:
+      file: db/changelog/changes/001-initial-schema.sql
+  - include:
+      file: db/changelog/test/001-test-sample-mock-data.sql
