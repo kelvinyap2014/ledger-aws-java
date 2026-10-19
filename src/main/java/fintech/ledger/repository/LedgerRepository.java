@@ -9,4 +9,6 @@ import java.util.List;
 @Repository
 public interface LedgerRepository extends JpaRepository<LedgerEntry, String> {
     List<LedgerEntry> findByTransactionReference(String transactionReference);
+
+    List<LedgerEntry> findByAccountId(String accountId);
 }

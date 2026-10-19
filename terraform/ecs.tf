@@ -34,7 +34,9 @@ resource "aws_ecs_task_definition" "app" {
       environment = [
         { name = "SPRING_PROFILES_ACTIVE", value = "prod" },
         { name = "SERVER_PORT", value = "8080" },
-        { name = "SQS_SETTLEMENT_QUEUE_URL", value = aws_sqs_queue.settlement_queue.url }
+        { name = "SQS_SETTLEMENT_QUEUE_URL", value = aws_sqs_queue.settlement_queue.url },
+        { name = "AWS_REGION", value = var.region },
+        { name = "AWS_S3_AUDIT_BUCKET_NAME", value = aws_s3_bucket.audit_statements.id }
       ]
       secrets = [
         { name = "DB_URL", valueFrom = aws_ssm_parameter.db_url.arn },
@@ -157,4 +159,32 @@ resource "aws_iam_policy" "ecs_sqs_policy" {
 resource "aws_iam_role_policy_attachment" "ecs_task_sqs_attach" {
   role       = aws_iam_role.ecs_task_role.name
   policy_arn = aws_iam_policy.ecs_sqs_policy.arn
+}
+
+# Grant task role permission to read/write to S3 audit bucket
+resource "aws_iam_policy" "ecs_s3_policy" {
+  name = "ledger-stream-ecs-s3-policy-${var.environment}"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.audit_statements.arn,
+          "${aws_s3_bucket.audit_statements.arn}/*"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_task_s3_attach" {
+  role       = aws_iam_role.ecs_task_role.name
+  policy_arn = aws_iam_policy.ecs_s3_policy.arn
 }

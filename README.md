@@ -415,6 +415,8 @@ docker run --rm \
   -e DB_USERNAME=ledgerstream \
   -e DB_PASSWORD=secret \
   -e SQS_SETTLEMENT_QUEUE_URL=https://sqs.ap-southeast-2.amazonaws.com/<aws-account-id>/ledger-settlement-queue-dev \
+  -e AWS_REGION=ap-southeast-2 \
+  -e AWS_S3_AUDIT_BUCKET_NAME=ledger-audit-statements-dev \
   ledger-stream:latest
 ```
 
@@ -490,7 +492,13 @@ The workflow triggers automatically on changes to:
 
 The API will be available at `http://localhost:8080/swagger-ui/index.html`.
 
-### 2. Execute a Transfer Request
+### 2. Get Account Statement URL Request
+```bash
+curl -X GET "http://localhost:8080/api/v1/accounts/acc-001-nzd/statement/url" \
+     -H "Accept: application/json"
+```
+
+### 3. Execute a Transfer Request
 ```bash
 curl -X POST http://localhost:8080/api/v1/transfers \
   -H "Content-Type: application/json" \
@@ -513,7 +521,7 @@ curl -X POST http://localhost:8080/api/v1/transfers \
 }
 ```
 
-### 3. Verify Idempotency — Resubmit with Same Key
+### 4. Verify Idempotency — Resubmit with Same Key
 ```bash
 curl -X POST http://localhost:8080/api/v1/transfers \
   -H "Content-Type: application/json" \
@@ -528,7 +536,7 @@ curl -X POST http://localhost:8080/api/v1/transfers \
 ```
 Should return the **same transaction reference** and HTTP 201 without creating duplicate entries.
 
-### 4. Test Insufficient Funds Scenario
+### 5. Test Insufficient Funds Scenario
 ```bash
 curl -X POST http://localhost:8080/api/v1/transfers \
   -H "Content-Type: application/json" \
