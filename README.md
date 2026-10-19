@@ -318,8 +318,8 @@ ledger-aws-java/
 │   │       └── db/
 │   │           └── changelog/               # Liquibase Migrations
 │   │               ├── db.changelog-master.yaml
-│   │               ├── changes/
-│   │               │   └── 001-initial-schema.sql
+│   │               └── changes/
+│   │                   └── 001-initial-schema.sql
 │   └── test/                        # Unit & Integration Tests (JUnit 5, Mockito, Testcontainers)
 │       └── java/
 │           └── fintech/
@@ -354,8 +354,8 @@ aws sts get-caller-identity
 aws configure
 
 aws lambda list-functions --region ap-southeast-2
-aws lambda get-function --function-name ledger-stream-settlement-dev --region ap-southeast-2
-aws logs tail /aws/lambda/ledger-stream-settlement-dev --follow --region ap-southeast-2
+aws lambda get-function --function-name ledger-stream-settlement-handler-dev --region ap-southeast-2
+aws logs tail /aws/lambda/ledger-stream-settlement-handler-dev --follow --region ap-southeast-2
 ```
 
 ### Terraform Commands
@@ -414,6 +414,7 @@ docker run --rm \
   -e DB_URL=jdbc:postgresql://172.17.0.1:5432/ledgerdb \
   -e DB_USERNAME=ledgerstream \
   -e DB_PASSWORD=secret \
+  -e SQS_SETTLEMENT_QUEUE_URL=https://sqs.ap-southeast-2.amazonaws.com/<aws-account-id>/ledger-settlement-queue-dev \
   ledger-stream:latest
 ```
 
@@ -424,11 +425,6 @@ docker run --rm \
 #### Run Dev Profile (PostgreSQL):
 ```bash
 ./gradlew bootRun --args='--spring.profiles.active=dev'
-```
-
-#### Run Test Profile (H2):
-```bash
-./gradlew bootRun --args='--spring.profiles.active=test'
 ```
 
 ## Go (Golang) development

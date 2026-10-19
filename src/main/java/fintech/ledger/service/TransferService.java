@@ -2,10 +2,12 @@ package fintech.ledger.service;
 
 import fintech.ledger.domain.IdempotencyKey;
 import fintech.ledger.domain.LedgerEntry;
+import fintech.ledger.domain.SettlementEvent;
 import fintech.ledger.repository.AccountRepository;
 import fintech.ledger.repository.IdempotencyRepository;
 import fintech.ledger.repository.LedgerRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,6 +16,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TransferService {
@@ -21,10 +24,12 @@ public class TransferService {
     private final AccountRepository accountRepository;
     private final LedgerRepository ledgerRepository;
     private final IdempotencyRepository idempotencyRepository;
+    private final SqsSettlementPublisher sqsPublisher;
 
     @Transactional
     public String executeTransfer(String idempotencyKey, String sourceAccountId, String destinationAccountId, BigDecimal amount, String currency, String description) {
 
+        log.info("Begin transfer from {} to {} of amount {} {}", sourceAccountId, destinationAccountId, amount, currency);
         // 1. Enforce Idempotency if key is provided
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
             var existingKeyOpt = idempotencyRepository.findById(idempotencyKey);
@@ -76,6 +81,20 @@ public class TransferService {
                     .build();
             idempotencyRepository.save(keyRecord);
         }
+
+        // 1. Emit asynchronous settlement event to SQS (Non-blocking)
+        SettlementEvent event = new SettlementEvent(
+                txRef,
+                sourceAccountId,
+                destinationAccountId,
+                amount,
+                currency,
+                OffsetDateTime.now()
+        );
+        sqsPublisher.publish(event);
+
+        log.info("End transfer from {} to {} of amount {} {}, transaction reference: {}",
+                sourceAccountId, destinationAccountId, amount, currency, txRef);
 
         return txRef;
     }

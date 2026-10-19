@@ -33,7 +33,8 @@ resource "aws_ecs_task_definition" "app" {
       ]
       environment = [
         { name = "SPRING_PROFILES_ACTIVE", value = "prod" },
-        { name = "SERVER_PORT", value = "8080" }
+        { name = "SERVER_PORT", value = "8080" },
+        { name = "SQS_SETTLEMENT_QUEUE_URL", value = aws_sqs_queue.settlement_queue.url }
       ]
       secrets = [
         { name = "DB_URL", valueFrom = aws_ssm_parameter.db_url.arn },
@@ -133,4 +134,27 @@ resource "aws_iam_role" "ecs_task_role" {
       Principal = { Service = "ecs-tasks.amazonaws.com" }
     }]
   })
+}
+
+# Grant task role permission to send messages to SQS
+resource "aws_iam_policy" "ecs_sqs_policy" {
+  name = "ledger-stream-ecs-sqs-policy-${var.environment}"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage"
+        ]
+        Resource = aws_sqs_queue.settlement_queue.arn
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_task_sqs_attach" {
+  role       = aws_iam_role.ecs_task_role.name
+  policy_arn = aws_iam_policy.ecs_sqs_policy.arn
 }
