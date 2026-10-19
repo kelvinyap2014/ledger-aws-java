@@ -355,7 +355,6 @@ aws configure
 
 aws lambda list-functions --region ap-southeast-2
 aws lambda get-function --function-name ledger-stream-settlement-dev --region ap-southeast-2
-
 aws logs tail /aws/lambda/ledger-stream-settlement-dev --follow --region ap-southeast-2
 ```
 
@@ -382,6 +381,40 @@ terraform apply -var-file="terraform-prod.tfvars"
 
 # Destroy resources (cleanup)
 terraform destroy -var-file="terraform-dev.tfvars"
+```
+
+### Build the Docker Image Locally and push to AWS ECR
+```bash
+# Create the ECR repository
+terraform apply -var-file="terraform-dev.tfvars" -target=aws_ecr_repository.ledger_stream
+
+# Authenticate your local Docker client to your AWS ECR registry
+aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <aws-account-id>.dkr.ecr.<region>.amazonaws.com
+
+# Build your Docker image from your project root directory
+docker build -t ledger-stream .
+
+# Tag your local image so Docker knows which ECR repository and tag it
+docker tag ledger-stream:latest <aws-account-id>.dkr.ecr.<region>.amazonaws.com/ledger-stream:latest
+
+# Push the tagged image up to your ECR repository
+docker push <aws-account-id>.dkr.ecr.<region>.amazonaws.com/ledger-stream:latest
+
+aws ecs update-service --cluster ledger-stream-cluster-dev --service ledger-stream-service-dev --force-new-deployment --region ap-southeast-2
+
+aws logs tail /ecs/ledger-stream-dev --follow --region ap-southeast-2
+```
+
+#### Test Docker Image Locally
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  -e SERVER_PORT=8080 \
+  -e SPRING_PROFILES_ACTIVE=prod \
+  -e DB_URL=jdbc:postgresql://172.17.0.1:5432/ledgerdb \
+  -e DB_USERNAME=ledgerstream \
+  -e DB_PASSWORD=secret \
+  ledger-stream:latest
 ```
 
 ## Java development
