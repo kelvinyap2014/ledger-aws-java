@@ -2,6 +2,7 @@
 This pet project is to demonstrate the skills of AI-assisted technical design and implementation using:
 - Java, Spring Boot
 - PostgreSQL
+- TypeScript/ NestJS/ Node.js
 - AWS - ECS/Fargate, ALB, RDS, S3, Lambda, SQS, serverless architecture
 - Terraform
 - Git/GitHub
@@ -23,7 +24,7 @@ graph TD
     end
 
     Fargate -->|Send Event| SQS["AWS SQS Queue"]
-    SQS -->|Trigger| Lambda["AWS Lambda: Settlement Processor"]
+    SQS -->|Trigger| Lambda["AWS Lambda: NestJS Settlement Processor"]
     Lambda -->|Update Status| RDS
 ```
 
@@ -38,7 +39,7 @@ sequenceDiagram
     participant DB as PostgreSQL (RDS)
     participant S3 as AWS S3
     participant SQS as AWS SQS
-    participant Lambda as AWS Lambda
+    participant Lambda as AWS Lambda (NestJS)
 
     Note over Client, DB: Step 1: Execute Double-Entry Transaction
     Client->>App: POST /api/v1/transfers (Idempotency-Key, Payload)
@@ -302,7 +303,13 @@ class TransferServiceIntegrationTest {
 
 ```text
 ledger-aws-java/
-├── .github/workflows/          # CI/CD pipeline (GitHub Actions for Gradle build, tests, & Docker push)
+├── .github/workflows/          # CI/CD pipeline (GitHub Actions for Gradle build, tests)
+├── app/
+│   └── lambda/                 # AWS Lambda Functions
+│       └── settlement-handler/ # Asynchronous Settlement Processor (TypeScript/ NestJS / Node.js)
+│           ├── src/            # NestJS Lambda entrypoint & handlers
+│           ├── package.json    # Node dependencies
+│           └── tsconfig.json   # TypeScript configuration
 ├── src/                        # Java Spring Boot Source Code
 │   ├── main/
 │   │   ├── java/
@@ -325,9 +332,6 @@ ledger-aws-java/
 │           └── fintech/
 │               └── ledger/
 │                   └── LedgerStreamApplicationTests.java
-├── lambda/                     # Asynchronous Settlement Lambda Handler (Go)
-│   └── settlement-handler/
-│       └── main.go             # Go (Golang) Lambda entrypoint for processing SQS events
 ├── terraform/                  # Infrastructure as Code (AWS ECS Fargate, RDS, ALB, S3, SQS)
 │   ├── variables.tf            # Environment parameters
 │   ├── provider.tf             # AWS provider setup
@@ -341,7 +345,6 @@ ledger-aws-java/
 ├── Dockerfile                  # Multi-stage Docker build for Spring Boot on Fargate
 ├── build.gradle                # Gradle build file (Spring Boot, Liquibase, AWS SDK dependencies)
 ├── settings.gradle             # Gradle settings
-├── Makefile                    # Automation for local build, Docker build, and testing
 └── README.md                   # Comprehensive architecture & setup guide
 ```
 
@@ -429,57 +432,34 @@ docker run --rm \
 ./gradlew bootRun --args='--spring.profiles.active=dev'
 ```
 
-## Go (Golang) development
-
-For comprehensive step-by-step guidance on building and packaging Go Lambda functions, **load the Golang Build skill**:
-```
-.agents/skills/golang-build/SKILL.md
-```
+## TypeScript, NestJS, Node.js Development
 
 ### Quick Start: Build & Package Lambda Functions
 
 ```bash
-# 1. Initialize Go module (first time only)
-go mod init ledger-aws-java
+cd app/lambda/settlement-handler
 
-# 2. Install dependencies
-go get github.com/aws/aws-lambda-go/events
-go get github.com/aws/aws-lambda-go/lambda
+# 1. Install dependencies
+npm install
 
-# 3. Build individual Lambda handler
-cd lambda/settlement-handler
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bootstrap main.go
-zip function.zip bootstrap
-cd ../../
+# 2. Build NestJS Lambda handler
+npm run build
 
-# 4. Or build all handlers using Makefile (recommended)
-make build
-# 5. Complete pipeline: format → vet → test → build
-make all
+# 3. Build function.zip file for AWS Lambda deployment
+./build.sh
 ```
 
-### Build Commands
-
-| Command | Purpose |
-|---------|---------|
-| `make build` | Build all Go (Golang) Lambda functions |
-| `make clean` | Remove build artifacts |
-| `make all` | Complete pipeline: format → vet → test → build |
-
-### CI/CD: Automated Build via GitHub Actions
-
-The project includes an automated build workflow (`.github/workflows/build-golang.yml`) that runs on every push/PR to:
-1. **Format & Lint** Go code
-2. **Run Unit Tests** with coverage reporting
-3. **Build** all Lambda function binaries for Linux/AMD64
-4. **Package** binaries as ZIP files for Lambda deployment
-5. **Security Scan** dependencies for vulnerabilities
-
-The workflow triggers automatically on changes to:
-- `lambda/**` — Lambda handler code
-- `go.mod`, `go.sum` — Dependencies
-- `Makefile` — Build automation
-- `.github/workflows/build-golang.yml` — Workflow definition itself
+### Background: How TypeScript, NestJS, Node.js project was setup from scratch
+```bash
+mkdir -p app/lambda/settlement-handler
+cd app/lambda/settlement-handler
+# Initialize a new Node.js project (if package.json doesn't exist yet)
+npm init -y
+# Production Dependencies (NestJS core & reflection)
+npm install @nestjs/common @nestjs/core reflect-metadata rxjs
+# Development Dependencies (TypeScript, AWS types, and bundler)
+npm install --save-dev typescript @types/node @types/aws-lambda esbuild @nestjs/cli
+```
 
 # Testing
 
