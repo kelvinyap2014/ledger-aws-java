@@ -468,6 +468,8 @@ npm install --save-dev typescript @types/node @types/aws-lambda esbuild @nestjs/
 ### 1. Start the Application
 ```bash
 ./gradlew bootRun --args='--spring.profiles.active=dev'
+
+curl -X GET "http://localhost:8000/health"
 ```
 
 The API will be available at `http://localhost:8080/swagger-ui/index.html`.
