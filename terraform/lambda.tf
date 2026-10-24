@@ -24,14 +24,14 @@ resource "aws_iam_role_policy_attachment" "lambda_sqs" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
 }
 
-# AWS Lambda Function (Go runtime)
+# AWS Lambda Function
 resource "aws_lambda_function" "settlement_handler" {
-  filename         = "../lambda/settlement-handler/function.zip"
+  filename         = "../app/lambda/settlement-handler/function.zip"
   function_name    = "${var.project_name}-settlement-handler-${var.environment}"
   role             = aws_iam_role.lambda_exec.arn
-  handler          = "bootstrap"             # Standard handler name for Go custom runtimes
-  runtime          = "provided.al2023"       # Amazon Linux 2023 runtime for Go
-  source_code_hash = filebase64sha256("../lambda/settlement-handler/function.zip")
+  handler          = "dist/handler.handler"  # NestJS bundled handler entry point
+  runtime          = "nodejs22.x"            # Node.js runtime
+  source_code_hash = filebase64sha256("../app/lambda/settlement-handler/function.zip")
   timeout          = 60
   environment {
     variables = {
